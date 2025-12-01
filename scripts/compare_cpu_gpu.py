@@ -35,8 +35,12 @@ def main():
             f"- host={r.get('host','?'):15s} "
             f"backend={r['backend']:3s} "
             f"mean={r['mean_latency_ms']:.2f} ms "
+            f"p50={r.get('p50_ms', 0):.2f} ms "
+            f"p90={r.get('p90_ms', 0):.2f} ms "
+            f"p99={r.get('p99_ms', 0):.2f} ms "
             f"throughput={r['throughput']:.2f} inf/s"
         )
+
 
     # Filter for this host only (PC), separate cpu/gpu
     hosts = {r["host"] for r in results}
