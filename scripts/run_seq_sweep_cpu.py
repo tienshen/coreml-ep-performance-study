@@ -1,6 +1,6 @@
 import subprocess
 
-SEQ_LENS = [64, 128, 256, 384]
+SEQ_LENS = [64, 128, 256, 384, 512]
 BATCH = 1
 
 def run_cpu_seq_sweep():
