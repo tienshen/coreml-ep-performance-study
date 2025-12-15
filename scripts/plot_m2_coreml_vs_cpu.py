@@ -129,7 +129,7 @@ def plot_for_csv(csv_path: Path, out_dir: Path, batch_size: int) -> None:
     plt.xlabel("Sequence length")
     plt.ylabel("Throughput (inferences/sec)")
     plt.title(
-        f"{mode_name} on Apple M2: throughput vs sequence length\n"
+        f"Apple M2: throughput vs sequence length\n"
         f"(batch={batch_size}, model={model_name})"
     )
     plt.grid(True, which="both", linestyle="--", alpha=0.4)
