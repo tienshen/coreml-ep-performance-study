@@ -56,6 +56,10 @@ def run_bench(model_name, providers, batch_size, seq_len, profile_dir=None, verb
     print(f"Loading ONNX model from {model_path}")
 
     so = ort.SessionOptions()
+    
+    # Enable graph optimization
+    so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+    
     if verbose:
         so.log_severity_level = 0   # VERBOSE
         so.log_verbosity_level = 1
@@ -95,7 +99,15 @@ def run_bench(model_name, providers, batch_size, seq_len, profile_dir=None, verb
 
     if profile_dir is not None:
         prof_path = sess.end_profiling()
-        print("ORT profile written to:", prof_path)
+        
+        # Rename to remove timestamp and use consistent naming
+        import shutil
+        new_prof_path = os.path.join(
+            profile_dir,
+            f"{model_name}_b{batch_size}_s{seq_len}_" + "_".join([p if isinstance(p, str) else p[0] for p in providers]) + ".json"
+        )
+        shutil.move(prof_path, new_prof_path)
+        print("ORT profile written to:", new_prof_path)
 
     times = np.array(times)
     mean = times.mean() * 1000
