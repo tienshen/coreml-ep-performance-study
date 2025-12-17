@@ -117,12 +117,32 @@ def run_bench(model_name, providers, batch_size, seq_len, profile_dir=None, verb
         
         # Rename to remove timestamp and use consistent naming
         import shutil
+        import subprocess
+        import sys
+        
         new_prof_path = os.path.join(
             profile_dir,
             f"{model_name}_b{batch_size}_s{seq_len}_" + "_".join([p if isinstance(p, str) else p[0] for p in providers]) + ".json"
         )
         shutil.move(prof_path, new_prof_path)
         print("ORT profile written to:", new_prof_path)
+        
+        # Automatically generate summary
+        summary_path = new_prof_path.replace(".json", "_summary.txt")
+        summarizer_script = os.path.join(os.path.dirname(__file__), "summarize_ort_profile.py")
+        
+        try:
+            subprocess.run(
+                [sys.executable, summarizer_script, new_prof_path, "--top", "50", "--output", summary_path],
+                check=True,
+                capture_output=True,
+                text=True
+            )
+            print("Profile summary written to:", summary_path)
+        except subprocess.CalledProcessError as e:
+            print(f"Warning: Failed to generate profile summary: {e}")
+            if e.stderr:
+                print(f"  Error: {e.stderr}")
 
     times = np.array(times)
     mean = times.mean() * 1000
