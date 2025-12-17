@@ -24,12 +24,21 @@ def make_dummy_inputs(tokenizer, seq_len: int, batch_size: int) -> Dict[str, Any
     return {k: v for k, v in enc.items()}
 
 def infer_tokenizer_from_onnx_path(onnx_path: str) -> str:
+    """
+    Infer the HuggingFace tokenizer name from ONNX model filename.
+    
+    Examples:
+        tiny-systems-bert_b1_s128_fast-gelu_fp16 -> tiny-systems-bert
+        bert-base-uncased_b1_s128_gelu_fp16 -> bert-base-uncased
+        distilbert-base-uncased -> distilbert-base-uncased
+    """
     stem = Path(onnx_path).stem  # remove .onnx
-    # strip suffixes like _b1_s128, _fastgelu, _static, etc.
-    stem = re.sub(r"_b\d+_s\d+.*$", "", stem)
-    stem = re.sub(r"_s\d+_b\d+.*$", "", stem)
-    stem = re.sub(r"_fastgelu.*$", "", stem)
-    stem = re.sub(r"_static.*$", "", stem)
+    # Strip common suffixes: batch/seq dims, activation type, precision
+    stem = re.sub(r"_b\d+_s\d+.*$", "", stem)  # _b1_s128...
+    stem = re.sub(r"_s\d+_b\d+.*$", "", stem)  # _s128_b1...
+    stem = re.sub(r"_(fast-)?gelu.*$", "", stem)  # _gelu, _fast-gelu
+    stem = re.sub(r"_fp(16|32).*$", "", stem)  # _fp16, _fp32
+    stem = re.sub(r"_static.*$", "", stem)  # _static
     return stem
 
 def make_providers(ep_mode: str):
@@ -83,7 +92,13 @@ def run_bench(model_name, providers, batch_size, seq_len, profile_dir=None, verb
         print(i.name, i.shape, i.type)
     print("Session providers (resolved):", sess.get_providers())
 
-    tokenizer = AutoTokenizer.from_pretrained("tiny-systems-bert", use_fast=True) #model_name)
+    # Infer tokenizer name from model name
+    # Strip suffixes like _b1_s128, _fast-gelu, _fp16, etc. to get base model name
+    if tokenizer_name is None:
+        tokenizer_name = infer_tokenizer_from_onnx_path(model_name)
+    
+    print(f"Using tokenizer: {tokenizer_name}")
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_name, use_fast=True)
     feed = make_dummy_inputs(tokenizer, seq_len, batch_size)
 
     # warmup
@@ -128,6 +143,7 @@ if __name__ == "__main__":
     parser.add_argument("--ep", type=str, default="coreml_cpu", choices=["cpu", "coreml", "coreml_cpu"])
     parser.add_argument("--profile-dir", type=str, default=None, help="If set, enable ORT profiling and write JSON here")
     parser.add_argument("--verbose", action="store_true", help="Enable ORT verbose logging")
+    parser.add_argument("--tokenizer", type=str, default=None, help="HuggingFace tokenizer name (default: inferred from model name)")
     args = parser.parse_args()
 
     requested = make_providers(args.ep)
@@ -140,4 +156,5 @@ if __name__ == "__main__":
             print("Available providers:", ort.get_available_providers())
             raise SystemExit(2)
 
-    run_bench(args.model, requested, args.batch, args.seq_len, profile_dir=args.profile_dir, verbose=args.verbose)
+    run_bench(args.model, requested, args.batch, args.seq_len, 
+              profile_dir=args.profile_dir, verbose=args.verbose, tokenizer_name=args.tokenizer)
