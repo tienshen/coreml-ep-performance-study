@@ -9,10 +9,16 @@ from pathlib import Path
 import re
 
 
-RUNS = 2
-WARMUP = 1
+RUNS = 100
+WARMUP = 5
+
+def is_vision_model(model_name: str) -> bool:
+    """Check if model is a vision model (not NLP)."""
+    vision_keywords = ['mobilenet', 'resnet', 'efficientnet', 'vit', 'deit', 'convnext']
+    return any(kw in model_name.lower() for kw in vision_keywords)
 
 def make_dummy_inputs(tokenizer, seq_len: int, batch_size: int) -> Dict[str, Any]:
+    """Create dummy inputs for NLP models."""
     text = ["hello world"] * batch_size
     enc = tokenizer(
         text,
@@ -22,6 +28,13 @@ def make_dummy_inputs(tokenizer, seq_len: int, batch_size: int) -> Dict[str, Any
         return_tensors="np",
     )
     return {k: v for k, v in enc.items()}
+
+def make_dummy_image_inputs(batch_size: int, height: int, width: int, channels: int = 3, dtype=np.float32) -> Dict[str, Any]:
+    """Create dummy inputs for vision models."""
+    # ImageNet normalization range [-2.5, 2.5] approximately
+    return {
+        'input': np.random.randn(batch_size, channels, height, width).astype(dtype)
+    }
 
 def infer_tokenizer_from_onnx_path(onnx_path: str) -> str:
     """
@@ -92,14 +105,27 @@ def run_bench(model_name, providers, batch_size, seq_len, profile_dir=None, verb
         print(i.name, i.shape, i.type)
     print("Session providers (resolved):", sess.get_providers())
 
-    # Infer tokenizer name from model name
-    # Strip suffixes like _b1_s128, _fast-gelu, _fp16, etc. to get base model name
-    if tokenizer_name is None:
-        tokenizer_name = infer_tokenizer_from_onnx_path(model_name)
-    
-    print(f"Using tokenizer: {tokenizer_name}")
-    tokenizer = AutoTokenizer.from_pretrained(tokenizer_name, use_fast=True)
-    feed = make_dummy_inputs(tokenizer, seq_len, batch_size)
+    # Check if this is a vision model or NLP model
+    if is_vision_model(model_name):
+        print("Detected vision model - using image inputs")
+        # Parse image dimensions from model name (e.g., _h224_w224)
+        height_match = re.search(r'_h(\d+)', model_name)
+        width_match = re.search(r'_w(\d+)', model_name)
+        height = int(height_match.group(1)) if height_match else 224
+        width = int(width_match.group(1)) if width_match else 224
+        # Check if model expects FP16 inputs
+        input_dtype = np.float16 if '_fp16' in model_name else np.float32
+        feed = make_dummy_image_inputs(batch_size, height, width, dtype=input_dtype)
+        print(f"Image input shape: {feed['input'].shape}, dtype: {feed['input'].dtype}")
+    else:
+        # Infer tokenizer name from model name
+        # Strip suffixes like _b1_s128, _fast-gelu, _fp16, etc. to get base model name
+        if tokenizer_name is None:
+            tokenizer_name = infer_tokenizer_from_onnx_path(model_name)
+        
+        print(f"Using tokenizer: {tokenizer_name}")
+        tokenizer = AutoTokenizer.from_pretrained(tokenizer_name, use_fast=True)
+        feed = make_dummy_inputs(tokenizer, seq_len, batch_size)
 
     # warmup
     for _ in range(WARMUP):
@@ -120,9 +146,15 @@ def run_bench(model_name, providers, batch_size, seq_len, profile_dir=None, verb
         import subprocess
         import sys
         
+        # For vision models, don't include seq_len in profile name
+        if is_vision_model(model_name):
+            profile_suffix = f"_b{batch_size}"
+        else:
+            profile_suffix = f"_b{batch_size}_s{seq_len}"
+        
         new_prof_path = os.path.join(
             profile_dir,
-            f"{model_name}_b{batch_size}_s{seq_len}_" + "_".join([p if isinstance(p, str) else p[0] for p in providers]) + ".json"
+            f"{model_name}{profile_suffix}_" + "_".join([p if isinstance(p, str) else p[0] for p in providers]) + ".json"
         )
         shutil.move(prof_path, new_prof_path)
         print("ORT profile written to:", new_prof_path)
@@ -154,6 +186,20 @@ def run_bench(model_name, providers, batch_size, seq_len, profile_dir=None, verb
     print(f"Mean latency: {mean:.2f} ms")
     print(f"p50: {p50:.2f} ms  p90: {p90:.2f} ms  p99: {p99:.2f} ms")
     print(f"Throughput: {throughput:.2f} inferences/sec")
+    
+    # Return results as dictionary for programmatic access
+    return {
+        'model_name': model_name,
+        'providers': providers,
+        'batch_size': batch_size,
+        'seq_len': seq_len,
+        'mean_latency_ms': mean,
+        'p50_latency_ms': p50,
+        'p90_latency_ms': p90,
+        'p99_latency_ms': p99,
+        'throughput_per_sec': throughput,
+        'profile_path': new_prof_path if profile_dir is not None else None
+    }
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -176,5 +222,5 @@ if __name__ == "__main__":
             print("Available providers:", ort.get_available_providers())
             raise SystemExit(2)
 
-    run_bench(args.model, requested, args.batch, args.seq_len, 
-              profile_dir=args.profile_dir, verbose=args.verbose, tokenizer_name=args.tokenizer)
+    results = run_bench(args.model, requested, args.batch, args.seq_len, 
+                        profile_dir=args.profile_dir, verbose=args.verbose, tokenizer_name=args.tokenizer)
