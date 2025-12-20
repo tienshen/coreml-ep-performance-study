@@ -67,19 +67,37 @@ Rather than treating CoreML as a black box, we use **profiling, graph analysis, 
 
 ### 4.1 CoreML Performance Anomaly
 
-
-For small Transformer models, **CoreML EP often underperforms CPU execution**, despite available accelerator hardware.
+First, we benchmarked Bert-Based-Uncased transformer model on CPU and CoreML. The result show that CPU outperformed CoreML by a large margin.
 
 ![BERT-base vs CPU/CoreML](results/plots/m2_coreml_vs_cpu/m2_coreml_vs_cpu_bert-base-uncased_combined.png)
-
-![DistilBERT vs CPU/CoreML](results/plots/m2_coreml_vs_cpu/m2_coreml_vs_cpu_distilbert-base-uncased_combined.png)
-
-![tiny-systems-bert vs CPU/CoreML](results/plots/m2_coreml_vs_cpu/m2_coreml_vs_cpu_tiny-systems-bert_combined.png)
 
 Initial profiling reveals:
 - heavy graph fragmentation  
 - frequent CPU↔CoreML transitions  
 - significant dispatch overhead  
+
+Could the heavy graph fragmentation and frequent CPU↔CoreML transitions be caused by transformer model size exceeding ANE unsupported embedded matrix size or unsupported transformer encoder layers? 
+
+BERT has roughly:
+- 110M parameters
+- 12 transformer encoder layers
+- Hidden size 768, Vocabulary size ~30k
+
+![DistilBERT vs CPU/CoreML](results/plots/m2_coreml_vs_cpu/m2_coreml_vs_cpu_distilbert-base-uncased_combined.png)
+
+DistilBERT has roughly:
+- ~66M parameters
+- 6 transformer layers (vs 12)
+- Hidden size 768
+
+![tiny-systems-bert vs CPU/CoreML](results/plots/m2_coreml_vs_cpu/m2_coreml_vs_cpu_tiny-systems-bert_combined.png)
+
+Tiny Systems Bert has roughly:
+  - ~4.4M parameters
+  - 2 transformer layers
+  - Hidden size 128
+
+Our benchmark results across different models shows that we did achieve latency and throughput gains from utilizing models with reduced layers or hidden size. However, it did not bridge performance gap between CPU and CoreML.
 
 This motivates a deeper diagnosis.
 
