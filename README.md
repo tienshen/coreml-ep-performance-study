@@ -111,6 +111,14 @@ ORT partitions the ONNX graph into multiple CoreML subgraphs separated by CPU-on
 
 In the `tiny-systems-bert` FP32 dynamic-batch experiment, profiling recorded **20 CoreML partitions interleaved with CPU nodes**. The trace (2.96 s total) shows `SequentialExecutor::Execute` spending ~841 ms just coordinating partition hops, while CPU-only ops such as `/encoder/*/intermediate_act_fn/Erf` (~20 ms per layer), `Where`, `Cast`, and `Expand` saturate the top of the kernel list. This concretes the fragmentation diagnosis: each CoreML block is short-lived and immediately followed by small CPU kernels.
 
+> `tiny-systems-bert_fp32_dynamic_gelu_profile_summary.txt`
+> - SequentialExecutor::Execute — **841 ms** (105 events)
+> - /encoder/layer.0/intermediate_act_fn/**Erf** — **20.7 ms**
+> - /encoder/layer.1/intermediate_act_fn/**Erf** — **19.6 ms**
+> - /Where_1 — **2.36 ms**, /Cast — **1.05 ms**, /Expand — **0.93 ms**
+
+[Full profile summary](results/txt/tiny-systems-bert_fp32_dynamic_gelu_profile_summary.txt)
+
 Common cut-makers include:
 - `Erf` (from GELU)  
 - `Where`  
@@ -125,23 +133,27 @@ Each partition boundary introduces:
 
 This explains why **batching improves throughput without reducing fragmentation**: overhead is amortized, not removed.
 
-[Full profile summary](results/txt/tiny-systems-bert_fp32_dynamic_gelu_profile_summary.txt)
 
 ---
 
 ### 4.3 Static Shapes Are Mandatory for Stable Behavior
 
-Dynamic shapes lead to:
-- unstable partitioning  
-- excessive fallback  
-- noisy profiling results  
+Dynamic inputs force ORT to thread shape-resolution ops through the graph. In the `tiny-systems-bert` FP32 dynamic export this produced **20 CoreML partitions across 167 nodes**, mean latency **7.5 ms**, throughput **133 inf/sec**, and executor overhead **841 ms** (see 4.2). Every inference paid extra CPU work simply to reconcile shapes, so partitioning remained fragmented.
 
-Exporting ONNX models with **fixed (batch, seq_len)**:
-- stabilizes execution  
-- makes profiling repeatable  
-- improves performance consistency  
+Freezing the same model to **static batch=1, seq=128** removes that shape plumbing:
+- Graph shrinks to **125 nodes** with **16 CoreML partitions**
+- Mean latency drops to **5.1 ms**, throughput rises to **196 inf/sec**
+- Executor overhead falls to **545 ms**, indicating fewer CPU↔CoreML transitions
+- Partition quality improves: **100/125 nodes (80%)** run on CoreML despite fewer partitions
 
-Static shapes act as **hard contracts** for CoreML EP.
+Static shapes therefore act as hard contracts that let CoreML compile larger contiguous regions while cutting out shape-handling noise.
+
+> `tiny-systems-bert_fp32_static_b1_s128_gelu_profile_summary.txt`
+> - Mean latency **5.11 ms**, throughput **195.7/sec**
+> - CoreML partitions **16** (80% node coverage)
+> - SequentialExecutor::Execute — **545 ms** (105 events)
+
+[Full profile summary](results/txt/tiny-systems-bert_fp32_static_b1_s128_gelu_profile_summary.txt)
 
 ---
 
@@ -149,11 +161,14 @@ Static shapes act as **hard contracts** for CoreML EP.
 
 Profiling identifies `Erf` as a dominant CPU cut-maker.
 
-Replacing all GELU instances with **FastGELU**:
-- removes `Erf` from the graph  
-- reduces CoreML partition count  
-- decreases CPU kernel time  
-- yields measurable throughput improvement  
+Swapping GELU for **FastGELU** removes those `Erf` kernels entirely. On the static tiny-systems-bert run this lowered total profile time from **2.28 s → 2.21 s**, reduced executor overhead **545 ms → 533 ms**, and let CoreML collapse to **14 larger partitions** while still covering 110 nodes. The remaining CPU work is now the light `Where/Cast/Expand` set instead of ~41 ms of `Erf` activations, so each CoreML block executes longer before bouncing back to CPU. The latency gain is modest (~3%) but repeatable, and more importantly unlocks clean CoreML-only graphs for subsequent FP16 experiments.
+
+> `tiny-systems-bert_fp32_static_b1_s128_fast-gelu_profile_summary.txt`
+> - CoreML partitions **14** (110 nodes)
+> - SequentialExecutor::Execute — **533 ms** (↓12 ms vs GELU)
+> - No `Erf` kernels; CPU time limited to Where/Cast/Expand (~5 ms)
+
+[Full profile summary](results/txt/tiny-systems-bert_fp32_static_b1_s128_fast-gelu_profile_summary.txt)
 
 This demonstrates that **small, targeted graph edits can outperform generic tuning**.
 
