@@ -67,21 +67,23 @@ Rather than treating CoreML as a black box, we use **profiling, graph analysis, 
 
 ### 4.1 CoreML Performance Anomaly
 
-First, we benchmarked Bert-Based-Uncased transformer model on CPU and CoreML. The result show that CPU outperformed CoreML by a large margin.
+First, we benchmarked the BERT-base-uncased transformer on CPU vs CoreML and found CPU outperformed CoreML by a wide margin.
 
 ![BERT-base vs CPU/CoreML](results/plots/m2_coreml_vs_cpu/m2_coreml_vs_cpu_bert-base-uncased_combined.png)
+
+BERT has roughly:
+- 110M parameters
+- 12 transformer encoder layers
+- Hidden size 768, Vocabulary size ~30k
 
 Initial profiling reveals:
 - heavy graph fragmentation  
 - frequent CPU↔CoreML transitions  
 - significant dispatch overhead  
 
-Could the heavy graph fragmentation and frequent CPU↔CoreML transitions be caused by transformer model size exceeding ANE unsupported embedded matrix size or unsupported transformer encoder layers? 
+Could the heavy graph fragmentation and frequent CPU↔CoreML transitions be caused by transformer model size exceeding ANE unsupported embedded matrix size or unsupported transformer encoder layers?
 
-BERT has roughly:
-- 110M parameters
-- 12 transformer encoder layers
-- Hidden size 768, Vocabulary size ~30k
+Much of the CoreML architecture and specs are propriatary and not made publicly available. We can only obtain system insights by stress testing CoreML.
 
 ![DistilBERT vs CPU/CoreML](results/plots/m2_coreml_vs_cpu/m2_coreml_vs_cpu_distilbert-base-uncased_combined.png)
 
@@ -97,7 +99,7 @@ Tiny Systems Bert has roughly:
   - 2 transformer layers
   - Hidden size 128
 
-Our benchmark results across different models shows that we did achieve latency and throughput gains from utilizing models with reduced layers or hidden size. However, it did not bridge performance gap between CPU and CoreML.
+Our benchmark results across different models shows that latency and throughput improved from utilizing models with reduced layers or hidden size. However, CoreML consistently underperformed CPU by a wide margin even when model size was reduced.
 
 This motivates a deeper diagnosis.
 
@@ -106,6 +108,8 @@ This motivates a deeper diagnosis.
 ### 4.2 Graph Fragmentation, Not Memory, Is the Bottleneck
 
 ORT partitions the ONNX graph into multiple CoreML subgraphs separated by CPU-only operators.
+
+In the `tiny-systems-bert` FP32 dynamic-batch experiment, profiling recorded **20 CoreML partitions interleaved with CPU nodes**. The trace (2.96 s total) shows `SequentialExecutor::Execute` spending ~841 ms just coordinating partition hops, while CPU-only ops such as `/encoder/*/intermediate_act_fn/Erf` (~20 ms per layer), `Where`, `Cast`, and `Expand` saturate the top of the kernel list. This concretes the fragmentation diagnosis: each CoreML block is short-lived and immediately followed by small CPU kernels.
 
 Common cut-makers include:
 - `Erf` (from GELU)  
@@ -120,6 +124,8 @@ Each partition boundary introduces:
 - loss of kernel fusion opportunities  
 
 This explains why **batching improves throughput without reducing fragmentation**: overhead is amortized, not removed.
+
+[Full profile summary](results/txt/tiny-systems-bert_fp32_dynamic_gelu_profile_summary.txt)
 
 ---
 
@@ -176,7 +182,7 @@ To verify that CoreML is not inherently inferior, we benchmark MobileNet:
 
 - FP32 ONNX → 100% CoreML partition  
 - No fragmentation  
-- ~26× speedup over CPU  
+- ~16× speedup over CPU  
 
 This confirms:
 - CoreML excels on workloads with strong op coverage  
