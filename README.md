@@ -67,7 +67,14 @@ Rather than treating CoreML as a black box, we use **profiling, graph analysis, 
 
 ### 4.1 CoreML Performance Anomaly
 
+
 For small Transformer models, **CoreML EP often underperforms CPU execution**, despite available accelerator hardware.
+
+![BERT-base vs CPU/CoreML](results/plots/m2_coreml_vs_cpu/m2_coreml_vs_cpu_bert-base-uncased_combined.png)
+
+![DistilBERT vs CPU/CoreML](results/plots/m2_coreml_vs_cpu/m2_coreml_vs_cpu_distilbert-base-uncased_combined.png)
+
+![tiny-systems-bert vs CPU/CoreML](results/plots/m2_coreml_vs_cpu/m2_coreml_vs_cpu_tiny-systems-bert_combined.png)
 
 Initial profiling reveals:
 - heavy graph fragmentation  
