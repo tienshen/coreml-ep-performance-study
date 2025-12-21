@@ -140,7 +140,7 @@ In contrast:
 - CoreML EP internally lowers precision as needed  
 - Full accelerator offload becomes possible  
 
-The reduced latency observed in this configuration is not due to improved CoreML partitioning under FP16, but rather because most operators fall back to CPU execution. When plotting CPU vs CoreML in this configuration (static batching, fast-relu, and FP16 precision), we observe much overlap in performance.
+The reduced latency observed in this configuration is not due to improved CoreML partitioning under FP16, but rather because most operators fall back to CPU execution (See Appendix D for full profile summary). When plotting CPU vs CoreML in this configuration (static batching, fast-relu, and FP16 precision), we observe much overlap in performance.
 
 ![FP16 CPU vs CoreML](results/plots/batch_scaling_cpu_vs_coreml.png)
 
@@ -284,6 +284,6 @@ Profiling reference run: `results/txt/tiny-systems-bert_fp16_static_b1_s128_fast
 - Executor time: 287 ms  
 - All heavy ops run on CoreML; CPU work limited to lightweight control ops
 
-This run highlights §4.5: The FP16 export executes almost entirely on CPU with minimal CPU/CoreML tansitions.
+This run highlights §4.5: The FP16 export executes almost entirely on CPU with minimal CPU/CoreML tansitions. The reduced latency observed in this configuration is not due to improved CoreML partitioning under FP16, but rather because most operators fall back to CPU execution.
 
 [Full profile summary](results/txt/tiny-systems-bert_fp16_static_b1_s128_fast-gelu_profile_summary.txt)
