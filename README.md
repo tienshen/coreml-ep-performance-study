@@ -107,32 +107,14 @@ This motivates a deeper diagnosis.
 
 ### 4.2 Graph Fragmentation, Not Memory, Is the Bottleneck
 
-ORT partitions the ONNX graph into multiple CoreML subgraphs separated by CPU-only operators.
-
-In the `tiny-systems-bert` FP32 dynamic-batch experiment, profiling recorded **20 CoreML partitions interleaved with CPU nodes** (Appendix A). The trace shows `SequentialExecutor::Execute` spending most of its time coordinating partition hops, while CPU-only ops such as `/encoder/*/intermediate_act_fn/Erf`, `Where`, `Cast`, and `Expand` dominate the node-level timeline. This concretes the fragmentation diagnosis: each CoreML block is short-lived and immediately followed by small CPU kernels.
-
-Common cut-makers include:
-- `Erf` (from GELU)  
-- `Where`  
-- `Cast`  
-- `Expand`  
-- `Unsqueeze`  
-
-Each partition boundary introduces:
-- synchronization cost  
-- dispatch overhead  
-- loss of kernel fusion opportunities  
-
-This explains why **batching improves throughput without reducing fragmentation**: overhead is amortized, not removed.
+ORT partitions the ONNX graph into multiple CoreML subgraphs separated by CPU-only operators. On tiny-systems-bert, profiling revealed the inference timeline bouncing across twenty CoreML islands, with executor overhead dominating runtime (Appendix A). The same handful of CPU-only ops—`Erf`, `Where`, `Cast`, `Expand`, `Unsqueeze`—keep slicing up the graph, so batching merely amortizes the cost instead of removing it. Fragmentation, not raw compute, is the bottleneck.
 
 
 ---
 
 ### 4.3 Static Shapes Are Mandatory for Stable Behavior
 
-Dynamic inputs force ORT to thread shape-resolution ops through the graph. In the `tiny-systems-bert` FP32 dynamic export this produced **20 CoreML partitions across 167 nodes**, mean latency **7.5 ms**, throughput **133 inf/sec**, and executor overhead **841 ms** (Appendix A). Every inference paid extra CPU work simply to reconcile shapes, so partitioning remained fragmented.
-
-Freezing the same model to **static batch=1, seq=128** removes that shape plumbing: the graph shrinks to **125 nodes** with **16 CoreML partitions**, throughput rises to **196 inf/sec**, executor overhead drops to **545 ms**, and partition coverage reaches **80%** of nodes (Appendix B). Static shapes therefore act as hard contracts that let CoreML compile larger contiguous regions while cutting out shape-handling noise.
+Dynamic shapes force ORT to run extra shape-resolution ops on the CPU, which in turn keeps fragmenting the CoreML partitions (Appendix A). Exporting the same model with fixed batch/sequence removes that plumbing: the graph shrinks, partitions become fewer but larger, and CoreML covers most nodes (Appendix B). Static shapes act as hard contracts that stabilize both performance and profiling.
 
 ---
 
@@ -140,9 +122,7 @@ Freezing the same model to **static batch=1, seq=128** removes that shape plumbi
 
 Profiling identifies `Erf` as a dominant CPU cut-maker.
 
-Swapping GELU for **FastGELU** removes those `Erf` kernels entirely. On the static tiny-systems-bert run this lowered total profile time from **2.28 s → 2.21 s**, reduced executor overhead **545 ms → 533 ms**, and let CoreML collapse to **14 larger partitions** while still covering 110 nodes (Appendix C). The remaining CPU work is now the light `Where/Cast/Expand` set instead of ~41 ms of `Erf` activations, so each CoreML block executes longer before bouncing back to CPU. The latency gain is modest (~3%) but repeatable, and more importantly unlocks clean CoreML-only graphs for subsequent FP16 experiments.
-
-This demonstrates that **small, targeted graph edits can outperform generic tuning**.
+Swapping GELU for **FastGELU** removes the `Erf` ops that were cutting the graph, so CoreML executes longer stretches before bouncing to CPU (Appendix C). The end result is only a few percent faster, but it eliminates an entire class of CPU bottlenecks and simplifies later FP16 experiments. Small, targeted graph edits beat broad “tune everything” attempts.
 
 ---
 
@@ -238,18 +218,22 @@ The central insight is that **frontend compatibility and graph structure govern 
 
 ---
 
-## 9. Appendices
+## 9. Evidence & Profiling References
+
+Detailed per-kernel traces, executor breakdowns, and exact timing measurements
+supporting Sections 4.2–4.4 are provided below for reproducibility.
 
 ### Appendix A — tiny-systems-bert FP32 dynamic (baseline)
 
 Profiling reference run: `results/txt/tiny-systems-bert_fp32_dynamic_gelu_profile_summary.txt`
 
-> - Total duration **2.96 s**, events **8,829**
-> - `SequentialExecutor::Execute` — **841 ms** (105 events)
-> - CoreML partitions **20**, total nodes **167**, nodes on CoreML **142**
-> - Dominant CPU ops: `/encoder/*/intermediate_act_fn/Erf` (~20 ms per layer), `Where` (2.36 ms), `Cast` (1.05 ms), `Expand` (0.93 ms)
+### Appendix A — tiny-systems-bert FP32 dynamic (baseline)
 
-This trace underpins §4.2 and §4.3: dynamic shape resolution keeps spawning CPU-only ops that fragment the graph and inflate executor overhead.
+- Total duration: 2.96 s
+- CoreML partitions: 20
+- Nodes: 167 (CoreML: 142)
+- Executor time: 841 ms
+- Dominant CPU ops: Erf, Where, Cast, Expand
 
 [Full profile summary](results/txt/tiny-systems-bert_fp32_dynamic_gelu_profile_summary.txt)
 
@@ -259,10 +243,11 @@ This trace underpins §4.2 and §4.3: dynamic shape resolution keeps spawning CP
 
 Profiling reference run: `results/txt/tiny-systems-bert_fp32_static_b1_s128_gelu_profile_summary.txt`
 
-> - Mean latency **5.11 ms**, throughput **195.7/sec**
-> - CoreML partitions **16**, total nodes **125**, CoreML coverage **100 nodes (80%)**
-> - `SequentialExecutor::Execute` — **545 ms** (105 events)
-> - CPU ops dominated by `Erf` activations (~40 ms) with minor `Where/Cast/Expand`
+- Total duration: 2.28 s  
+- CoreML partitions: 16  
+- Nodes: 125 (CoreML: 100)  
+- Executor time: 545 ms  
+- CPU ops dominated by Erf (~40 ms total), minor Where/Cast/Expand
 
 This run demonstrates §4.3’s claim: locking shapes removes shape-handling overhead, shrinks the graph, and yields higher throughput with fewer—but higher-quality—partitions.
 
@@ -274,10 +259,11 @@ This run demonstrates §4.3’s claim: locking shapes removes shape-handling ove
 
 Profiling reference run: `results/txt/tiny-systems-bert_fp32_static_b1_s128_fast-gelu_profile_summary.txt`
 
-> - Total duration **2.21 s**, events **4,111**
-> - CoreML partitions **14**, CoreML nodes **110**
-> - `SequentialExecutor::Execute` — **533 ms** (105 events)
-> - CPU fallback limited to `Where/Cast/Expand` (~5 ms); no `Erf` kernels remain
+- Total duration: 2.21 s  
+- CoreML partitions: 14  
+- Nodes: 133 (CoreML: 110)  
+- Executor time: 533 ms  
+- CPU fallback limited to Where/Cast/Expand (~5 ms); no Erf kernels remain
 
 Appendix C supports §4.4 by showing how FastGELU eliminates `Erf` bottlenecks, enabling longer CoreML segments even though the partition count drops.
 
