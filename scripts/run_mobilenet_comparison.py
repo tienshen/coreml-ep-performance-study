@@ -221,15 +221,8 @@ def plot_comparison(results, output_path="results/plots/mobilenet_coreml_cpu_com
                  ha='center', va='bottom', fontsize=10, fontweight='bold')
     
     # Add overall title
-    fig.suptitle('Critical Performance Pitfall: Pre-converted FP16 ONNX Models Fail with CoreML EP\nMobileNetV2 on Apple M2', 
+    fig.suptitle('Performance Pitfall: Pre-converted FP16 ONNX Models Fail with CoreML EP\nMobileNetV2 on Apple M2', 
                  fontsize=15, fontweight='bold', y=1.02)
-    
-    # Add explanation text at bottom
-    fig.text(0.5, -0.12, 
-             'Key Finding: Pre-converted FP16 ONNX models prevent CoreML graph partitioning, causing CPU fallback!\n'
-             'FP32 ONNX let CoreML EP handle the conversion internally for proper partitioning.',
-             ha='center', fontsize=11, 
-             bbox=dict(boxstyle='round,pad=1', facecolor='lightyellow', edgecolor='orange', linewidth=2))
     
     plt.tight_layout()
     plt.savefig(output_path, dpi=300, bbox_inches='tight')

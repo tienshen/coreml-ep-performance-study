@@ -193,7 +193,10 @@ This shows that **user-visible dtype ≠ execution dtype** in CoreML.
 
 ### 4.6 Control Experiment: MobileNet on CoreML
 
-To verify that CoreML is not inherently inferior, we benchmark MobileNet:
+To verify that CoreML is not inherently inferior, we benchmark MobileNet on CoreML and CPU across FP32 and FP16 precisions:
+
+
+![Mobilenet on CoreML vs CPU for FP32/FP16](results/plots/mobilenet_fp16_vs_fp32_coreml_vs_cpu.png)
 
 - FP32 ONNX → 100% CoreML partition  
 - No fragmentation  
