@@ -231,7 +231,10 @@ coreml-ep-performance-study/
 │   ├── run_mac_bench.py                # main benchmark/profiling driver
 │   ├── run_mobilenet_comparison.py     # FP16 vs FP32 MobileNet study
 │   ├── plot_batch_scaling.py           # CPU/CoreML batch sweep figure
-│   └── export_vision_to_onnx.py        # MobileNet export helper
+│   ├── export_vision_to_onnx.py        # MobileNet export helper
+│   ├── export_to_onnx.py               # transformer export pipeline
+│   ├── summarize_ort_profile.py        # converts raw ORT traces → summaries
+│   └── analyze_fragmentation.py        # partition/coverage post-processing
 ├── results/
 │   ├── plots/             # figures referenced throughout the report
 │   ├── csv/               # benchmark tables (latency/throughput)
